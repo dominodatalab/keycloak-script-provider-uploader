@@ -15,8 +15,8 @@ You can supply any number of Javascript script provider files when you run the u
 
 ## Customisation
 If your Keycloak instance does not run in a namespace that includes both `domino` and `platform`, you can override this with the environment variable `KEYCLOAK_NAMESPACE`.
-`export KEYCLOAK_NAMESPACE=keycloak-namespace; script_provider_uploader.py`
 
+`export KEYCLOAK_NAMESPACE=keycloak-namespace; python script_provider_uploader.py`
 
 You specify another directory for your Javascript script providers like so:
 `python script_provider_uploader.py /path/to/javascript/files`
