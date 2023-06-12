@@ -1,56 +1,41 @@
 import json
-from kubernetes import client, config
-from kubernetes.stream import stream
 import os
 import shutil
 import sys
 import tarfile
+from kubernetes import client, config
+from kubernetes.stream import stream
 from tempfile import TemporaryFile
 
-# if no source_directory is supplied as an argument, use cwd
-if len(sys.argv) < 2:
-    source_directory = os.getcwd()
-else:
-    source_directory: str = sys.argv[1]
-
-keycloak_namespace = ""
-if os.getenv("KEYCLOAK_NAMESPACE") is not None:
-    keycloak_namespace = os.getenv("KEYCLOAK_NAMESPACE")
-    print(f"KEYCLOAK_NAMESPACE variable found: {keycloak_namespace}")
-
-destination_pod = ""
-destination_directory = "/opt/jboss/keycloak/standalone/deployments"
-destination_jarfile = "script_providers.jar"
-jar_folder = os.path.join(source_directory, "jar")
-metadata_folder = os.path.join(jar_folder, "META-INF")
-metadata_file = os.path.join(metadata_folder, "keycloak-scripts.json")
-
-print(f"Destination directory in Keycloak: {destination_directory}")
-print(f"Script provider jar file: {destination_jarfile}")
-
-config.load_kube_config()
-v1 = client.CoreV1Api()
+destination_directory: str = "/opt/jboss/keycloak/standalone/deployments"
+destination_jarfile: str = "script_providers.jar"
 
 
-def find_keycloak_pod():
-    global keycloak_namespace
-    if keycloak_namespace == "":
+class KeycloakPod:
+    def __init__(self):
+        self.namespace = ""
+        self.name: str = ""
+
+
+def find_keycloak_pod(namespace):
+    if namespace != "":
+        kcp.namespace = namespace
+    else:
         for i in v1.list_namespace().items:
             if "domino" in i.metadata.name and "platform" in i.metadata.name:
-                keycloak_namespace = i.metadata.name
-                print(f"Domino platform namespace: {keycloak_namespace}")
+                kcp.namespace = i.metadata.name
+                print(f"Domino platform namespace: {kcp.namespace}")
                 break
-    if keycloak_namespace == "":
+    if kcp.namespace == "":
         print("Domino platform namespace not found")
         exit(1)
 
-    global destination_pod
-    for pod in v1.list_namespaced_pod(namespace=keycloak_namespace).items:
+    for pod in v1.list_namespaced_pod(namespace=kcp.namespace).items:
         if pod.metadata.name.startswith("keycloak") and pod.metadata.name.endswith("-0"):
-            destination_pod = pod.metadata.name
-            print(f"Keycloak pod: {destination_pod}")
+            kcp.name = pod.metadata.name
+            print(f"Keycloak pod: {kcp.name}")
             break
-    if destination_pod == "":
+    if kcp.name == "":
         print("Keycloak pod not found")
         exit(1)
 
@@ -113,7 +98,7 @@ def build_jar():
 
 def copy_jar_to_keycloak():
     exec_command = ['tar', 'xvf', '-', '-C', destination_directory]
-    resp = stream(v1.connect_get_namespaced_pod_exec, destination_pod, keycloak_namespace,
+    resp = stream(v1.connect_get_namespaced_pod_exec, kcp.name, kcp.namespace,
                   command=exec_command,
                   stderr=True, stdin=True,
                   stdout=True, tty=False,
@@ -141,7 +126,7 @@ def copy_jar_to_keycloak():
 
 
 def main():
-    find_keycloak_pod()
+    find_keycloak_pod(keycloak_namespace)
 
     build_jar()
 
@@ -149,4 +134,27 @@ def main():
 
 
 if __name__ == '__main__':
+    if len(sys.argv) < 2:
+        source_directory = os.getcwd()
+    else:
+        source_directory: str = sys.argv[1]
+
+    if os.getenv("KEYCLOAK_NAMESPACE") is not None:
+        keycloak_namespace: str = os.getenv("KEYCLOAK_NAMESPACE")
+        print(f"KEYCLOAK_NAMESPACE variable found: {keycloak_namespace}")
+    else:
+        keycloak_namespace: str = ""
+
+    jar_folder = os.path.join(source_directory, "jar")
+    metadata_folder = os.path.join(jar_folder, "META-INF")
+    metadata_file = os.path.join(metadata_folder, "keycloak-scripts.json")
+
+    print(f"Destination directory in Keycloak: {destination_directory}")
+    print(f"Script provider jar file: {destination_jarfile}")
+
+    config.load_kube_config()
+    v1 = client.CoreV1Api()
+
+    kcp = KeycloakPod()
+
     main()
