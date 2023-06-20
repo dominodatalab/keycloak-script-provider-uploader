@@ -7,13 +7,13 @@ from kubernetes import client, config
 from kubernetes.stream import stream
 from tempfile import TemporaryFile
 
-destination_directory: str = "/opt/jboss/keycloak/standalone/deployments"
-destination_jarfile: str = "script_providers.jar"
+destination_directory: str = "/opt/jboss/keycloak/standalone/deployments/keycloak-resources"
+destination_jarfile: str = "custom_script_providers.jar"
 
 
 class KeycloakPod:
     def __init__(self):
-        self.namespace = ""
+        self.namespace: str = ""
         self.name: str = ""
 
 
@@ -74,13 +74,13 @@ def build_jar():
             policy_scripts.append(policy_dict)
         shutil.copyfile(os.path.join(source_directory, file), os.path.join(jar_folder, file))
 
-    keycloak_scripts_dict = {"authenticators": [], "mappers": [], "policies": []}
-    for script in authenticator_scripts:
-        keycloak_scripts_dict["authenticators"].append(script)
-    for script in mapper_scripts:
-        keycloak_scripts_dict["mappers"].append(script)
-    for script in policy_scripts:
-        keycloak_scripts_dict["policies"].append(script)
+    keycloak_scripts_dict = {}
+    if len(authenticator_scripts) > 0:
+        keycloak_scripts_dict["authenticators"] = authenticator_scripts
+    if len(mapper_scripts) > 0:
+        keycloak_scripts_dict["mappers"] = mapper_scripts
+    if len(policy_scripts) > 0:
+        keycloak_scripts_dict["policies"] = policy_scripts
 
     # serialise json
     json_object = json.dumps(keycloak_scripts_dict, indent=4)

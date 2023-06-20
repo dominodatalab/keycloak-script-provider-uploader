@@ -20,4 +20,5 @@ If your Keycloak instance does not run in a namespace that includes both `domino
 
 You specify another directory for your Javascript script providers like so:
 `python script_provider_uploader.py /path/to/javascript/files`
+
 The path can be relative to the uploader script (`./javascript/files`) or absolute, as above.
