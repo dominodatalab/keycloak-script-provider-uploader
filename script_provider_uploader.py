@@ -9,15 +9,16 @@ from tempfile import TemporaryFile
 
 destination_directory: str = "/opt/jboss/keycloak/standalone/deployments/keycloak-resources"
 destination_jarfile: str = "custom_script_providers.jar"
+keycloak_version: str = "18"
 
 
-class KeycloakPod:
+class KeycloakPods:
     def __init__(self):
         self.namespace: str = ""
-        self.name: str = ""
+        self.names = []
 
 
-def find_keycloak_pod(namespace):
+def find_keycloak_pods(namespace):
     if namespace != "":
         kcp.namespace = namespace
     else:
@@ -31,13 +32,14 @@ def find_keycloak_pod(namespace):
         exit(1)
 
     for pod in v1.list_namespaced_pod(namespace=kcp.namespace).items:
-        if pod.metadata.name.startswith("keycloak") and pod.metadata.name.endswith("-0"):
-            kcp.name = pod.metadata.name
-            print(f"Keycloak pod: {kcp.name}")
-            break
-    if kcp.name == "":
+        keycloak_pod_name = "keycloakv" + keycloak_version
+        if pod.metadata.name.startswith(keycloak_pod_name):
+            kcp.names.append(pod.metadata.name)
+            print(f"Keycloak pod: {pod.metadata.name}")
+    if not kcp.names:
         print("Keycloak pod not found")
         exit(1)
+    print(kcp.names)
 
 
 def build_jar():
@@ -81,6 +83,10 @@ def build_jar():
         keycloak_scripts_dict["mappers"] = mapper_scripts
     if len(policy_scripts) > 0:
         keycloak_scripts_dict["policies"] = policy_scripts
+    if len(keycloak_scripts_dict) == 0:
+        print("No script providers found")
+        shutil.rmtree(jar_folder)
+        exit(1)
 
     # serialise json
     json_object = json.dumps(keycloak_scripts_dict, indent=4)
@@ -97,38 +103,39 @@ def build_jar():
 
 
 def copy_jar_to_keycloak():
-    exec_command = ['tar', 'xvf', '-', '-C', destination_directory]
-    resp = stream(v1.connect_get_namespaced_pod_exec, kcp.name, kcp.namespace,
-                  command=exec_command,
-                  stderr=True, stdin=True,
-                  stdout=True, tty=False,
-                  _preload_content=False)
+    for keycloak_pod in kcp.names:
+        exec_command = ['tar', 'xvf', '-', '-C', destination_directory]
+        resp = stream(v1.connect_get_namespaced_pod_exec, keycloak_pod, kcp.namespace,
+                      command=exec_command,
+                      stderr=True, stdin=True,
+                      stdout=True, tty=False,
+                      _preload_content=False)
 
-    with TemporaryFile() as tar_buffer:
-        with tarfile.open(fileobj=tar_buffer, mode='w') as tar:
-            tar.add(destination_jarfile)
+        with TemporaryFile() as tar_buffer:
+            with tarfile.open(fileobj=tar_buffer, mode='w') as tar:
+                tar.add(destination_jarfile)
 
-        tar_buffer.seek(0)
-        commands = [tar_buffer.read()]
+            tar_buffer.seek(0)
+            commands = [tar_buffer.read()]
 
-        while resp.is_open():
-            resp.update(timeout=1)
-            if resp.peek_stdout():
-                print("STDOUT: %s" % resp.read_stdout())
-            if resp.peek_stderr():
-                print("STDERR: %s" % resp.read_stderr())
-            if commands:
-                c = commands.pop(0)
-                resp.write_stdin(c)
-            else:
-                break
-        resp.close()
+            while resp.is_open():
+                resp.update(timeout=1)
+                if resp.peek_stdout():
+                    print("STDOUT: %s" % resp.read_stdout())
+                if resp.peek_stderr():
+                    print("STDERR: %s" % resp.read_stderr())
+                if commands:
+                    c = commands.pop(0)
+                    resp.write_stdin(c)
+                else:
+                    break
+            resp.close()
 
 
 def main():
-    find_keycloak_pod(keycloak_namespace)
-
     build_jar()
+
+    find_keycloak_pods(keycloak_namespace)
 
     copy_jar_to_keycloak()
 
@@ -155,6 +162,6 @@ if __name__ == '__main__':
     config.load_kube_config()
     v1 = client.CoreV1Api()
 
-    kcp = KeycloakPod()
+    kcp = KeycloakPods()
 
     main()
