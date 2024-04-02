@@ -4,12 +4,11 @@ import shutil
 import sys
 import tarfile
 from kubernetes import client, config
+from kubernetes.client.rest import ApiException
 from kubernetes.stream import stream
 from tempfile import TemporaryFile
 
-destination_directory: str = "/opt/jboss/keycloak/standalone/deployments/keycloak-resources"
 destination_jarfile: str = "custom_script_providers.jar"
-keycloak_version: str = "18"
 
 
 class KeycloakPods:
@@ -22,24 +21,20 @@ def find_keycloak_pods(namespace):
     if namespace != "":
         kcp.namespace = namespace
     else:
-        for i in v1.list_namespace().items:
-            if "domino" in i.metadata.name and "platform" in i.metadata.name:
-                kcp.namespace = i.metadata.name
-                print(f"Domino platform namespace: {kcp.namespace}")
-                break
+        for ns in v1.list_namespace(label_selector='domino-platform = true').items:
+            kcp.namespace = ns.metadata.name
+            print(f"Domino platform namespace: {kcp.namespace}")
+            break
     if kcp.namespace == "":
         print("Domino platform namespace not found")
         exit(1)
 
-    for pod in v1.list_namespaced_pod(namespace=kcp.namespace).items:
-        keycloak_pod_name = "keycloakv" + keycloak_version
-        if pod.metadata.name.startswith(keycloak_pod_name):
-            kcp.names.append(pod.metadata.name)
-            print(f"Keycloak pod: {pod.metadata.name}")
+    for p in v1.list_namespaced_pod(namespace=kcp.namespace, label_selector='app.kubernetes.io/name = keycloak').items:
+        kcp.names.append(p.metadata.name)
     if not kcp.names:
         print("Keycloak pod not found")
         exit(1)
-    print(kcp.names)
+    print(f"Keycloak pods found: {kcp.names}")
 
 
 def build_jar():
@@ -104,6 +99,13 @@ def build_jar():
 
 def copy_jar_to_keycloak():
     for keycloak_pod in kcp.names:
+        if "v18" in keycloak_pod:
+            destination_directory: str = "/opt/jboss/keycloak/standalone/deployments/keycloak-resources"
+        elif "v22" in keycloak_pod:
+            destination_directory: str = "/domino/shared/custom-resources/providers"
+        elif "v23" in keycloak_pod:
+            destination_directory: str = "/domino/shared/custom-resources/providers"
+
         exec_command = ['tar', 'xvf', '-', '-C', destination_directory]
         resp = stream(v1.connect_get_namespaced_pod_exec, keycloak_pod, kcp.namespace,
                       command=exec_command,
@@ -130,6 +132,12 @@ def copy_jar_to_keycloak():
                 else:
                     break
             resp.close()
+        # Restart Keycloak pod to force it to read new jar file
+        try:
+            api_response = v1.delete_namespaced_pod(keycloak_pod, kcp.namespace)
+            print(f"Restarting Keycloak pod to complete copy: %s" % keycloak_pod)
+        except ApiException as e:
+            print("Exception when calling CoreV1Api->delete_namespaced_pod: %s\n" % e)
 
 
 def main():
@@ -155,9 +163,6 @@ if __name__ == '__main__':
     jar_folder = os.path.join(source_directory, "jar")
     metadata_folder = os.path.join(jar_folder, "META-INF")
     metadata_file = os.path.join(metadata_folder, "keycloak-scripts.json")
-
-    print(f"Destination directory in Keycloak: {destination_directory}")
-    print(f"Script provider jar file: {destination_jarfile}")
 
     config.load_kube_config()
     v1 = client.CoreV1Api()
